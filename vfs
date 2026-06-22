@@ -1,0 +1,192 @@
+#include <iostream>
+#include <memory>
+#include <string>
+#include <map>
+#include <vector>
+#include <sstream>
+#include <iomanip>
+
+// Representación de un nodo base en el sistema de archivos
+class Node {
+protected:
+    std::string name;
+    bool isDirectory;
+
+public:
+    Node(std::string name, bool isDir) : name(move(name)), isDirectory(isDir) {}
+    virtual ~Node() = default;
+
+    std::string getName() const { return name; }
+    bool isDir() const { return isDirectory; }
+    
+    virtual size_t getSize() const = 0;
+};
+
+// Clase para Archivos
+class File : public Node {
+private:
+    std::string content;
+
+public:
+    File(std::string name, std::string content = "") 
+        : Node(move(name), false), content(move(content)) {}
+
+    size_t getSize() const override {
+        return content.size(); // 1 byte por carácter
+    }
+
+    std::string getContent() const { return content; }
+    void setContent(const std::string& newContent) { content = newContent; }
+};
+
+// Clase para Directorios
+class Directory : public Node {
+private:
+    std::map<std::string, std::shared_ptr<Node>> children;
+    std::weak_ptr<Directory> parent;
+
+public:
+    Directory(std::string name, std::shared_ptr<Directory> parentDir = nullptr) 
+        : Node(move(name), true), parent(parentDir) {}
+
+    std::shared_ptr<Directory> getParent() const {
+        return parent.lock();
+    }
+
+    void setParent(std::shared_ptr<Directory> parentDir) {
+        parent = parentDir;
+    }
+
+    bool addChild(const std::shared_ptr<Node>& child) {
+        if (children.find(child->getName()) != children.end()) {
+            return false; // Ya existe
+        }
+        children[child->getName()] = child;
+        return true;
+    }
+
+    std::shared_ptr<Node> getChild(const std::string& childName) {
+        auto it = children.find(childName);
+        if (it != children.end()) {
+            return it->second;
+        }
+        return nullptr;
+    }
+
+    void listContents() const {
+        if (children.empty()) {
+            std::cout << "  (directorio vacío)\n";
+            return;
+        }
+        for (const auto& [name, node] : children) {
+            std::cout << "  [" << (node->isDir() ? "DIR" : "FILE") << "] " 
+                      << std::left << std::setw(15) << name 
+                      << " Size: " << node->getSize() << " bytes\n";
+        }
+    }
+
+    size_t getSize() const override {
+        size_t totalSize = 0;
+        for (const auto& [name, node] : children) {
+            totalSize += node->getSize();
+        }
+        return totalSize;
+    }
+};
+
+// Gestor del Sistema de Archivos
+class VFileSystem {
+private:
+    std::shared_ptr<Directory> root;
+    std::shared_ptr<Directory> current;
+
+public:
+    VFileSystem() {
+        root = std::make_shared<Directory>("/");
+        current = root;
+    }
+
+    void mkdir(const std::string& name) {
+        auto newDir = std::make_shared<Directory>(name, current);
+        if (!current->addChild(newDir)) {
+            std::cout << "Error: El directorio '" << name << "' ya existe.\n";
+        }
+    }
+
+    void touch(const std::string& name, const std::string& content = "") {
+        auto newFile = std::make_shared<File>(name, content);
+        if (!current->addChild(newFile)) {
+            std::cout << "Error: El archivo '" << name << "' ya existe o no se pudo crear.\n";
+        }
+    }
+
+    void ls() const {
+        std::cout << "Contenido de " << current->getName() << ":\n";
+        current->listContents();
+    }
+
+    void cd(const std::string& path) {
+        if (path == "..") {
+            if (current->getParent()) {
+                current = current->getParent();
+            } else {
+                std::cout << "Ya estás en el directorio raíz.\n";
+            }
+            return;
+        }
+
+        auto node = current->getChild(path);
+        if (node && node->isDir()) {
+            current = std::dynamic_pointer_cast<Directory>(node);
+        } else {
+            std::cout << "Error: El directorio '" << path << "' no existe.\n";
+        }
+    }
+
+    void df() const {
+        std::cout << "Uso total del Sistema de Archivos Virtual: " << root->getSize() << " bytes.\n";
+    }
+};
+
+// Interfaz de comandos
+int main() {
+    VFileSystem vfs;
+    std::string line;
+
+    std::cout << "=== Virtual File System Shell v1.0 ===\n";
+    std::cout << "Comandos: mkdir <nombre> | touch <nombre> | cd <dir> | ls | df | exit\n\n";
+
+    while (true) {
+        std::cout << "vfs_user@cpp_engine $ ";
+        if (!std::getline(std::cin, line)) break;
+
+        std::stringstream ss(line);
+        std::string command, arg1, arg2;
+        ss >> command >> arg1;
+
+        if (command == "exit") break;
+        else if (command == "mkdir") {
+            if (arg1.empty()) std::cout << "Uso: mkdir <nombre_directorio>\n";
+            else vfs.mkdir(arg1);
+        } 
+        else if (command == "touch") {
+            if (arg1.empty()) std::cout << "Uso: touch <nombre_archivo>\n";
+            else {
+                std::string remainder;
+                std::getline(ss, remainder);
+                vfs.touch(arg1, remainder);
+            }
+        } 
+        else if (command == "ls") vfs.ls();
+        else if (command == "cd") {
+            if (arg1.empty()) std::cout << "Uso: cd <nombre_directorio_o_..>\n";
+            else vfs.cd(arg1);
+        } 
+        else if (command == "df") vfs.df();
+        else if (!command.empty()) {
+            std::cout << "Comando no reconocido: " << command << "\n";
+        }
+    }
+
+    return 0;
+}
